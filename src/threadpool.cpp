@@ -4,15 +4,39 @@
 #include <iostream>
 
 namespace Threadpool {
+std::ostream &operator<<(std::ostream &os, ThreadpoolStatusCode code) {
+  switch (code) {
+  case ThreadpoolStatusCode::e_ACTIVE:
+    os << "e_ACTIVE";
+    break;
+  case ThreadpoolStatusCode::e_DEAD:
+    os << "e_DEAD";
+    break;
+  case ThreadpoolStatusCode::e_DRAINED:
+    os << "e_DRAINED";
+    break;
+  case ThreadpoolStatusCode::e_QUEUE_FULL:
+    os << "e_QUEUE_FULL";
+    break;
+  case ThreadpoolStatusCode::e_SUCCESS:
+    os << "e_SUCCESS";
+    break;
+  default:
+    os << "e_UNKNOWN";
+    break;
+  }
+  return os;
+}
+
 void Threadpool::worker(int workerId) {
   std::cout << std::format("Starting Worker {}", workerId) << std::endl;
   while (true) {
     std::function<void()> task;
     {
       std::unique_lock lock(mutex);
-      cv.wait(lock, [&]() { return stop || !threadPoolQueue.empty(); });
+      cv.wait(lock, [&] { return stop.load() || !threadPoolQueue.empty(); });
 
-      if (stop && threadPoolQueue.empty()) {
+      if (stop.load() && threadPoolQueue.empty()) {
         return;
       }
 
@@ -28,7 +52,7 @@ void Threadpool::worker(int workerId) {
   }
 }
 
-Threadpool::Threadpool(int workerCount) {
+Threadpool::Threadpool(unsigned short int workerCount, unsigned short int queueSize) : queueSize(queueSize) {
   std::cout << "Starting Threadpool" << std::endl;
   for (int i = 0; i < workerCount; ++i) {
     workers.emplace_back(&Threadpool::worker, this, i);
@@ -40,11 +64,18 @@ Threadpool::~Threadpool() {
   std::cout << "Destroying Threadpool" << std::endl;
 }
 
-void Threadpool::shutdown() {
-  drain();
+ThreadpoolStatusCode Threadpool::shutdown() {
+  if (stop.load()) {
+    std::cout << "Threadpool is already shutdown" << std::endl;
+    return ThreadpoolStatusCode::e_DEAD;
+  }
+  if (ThreadpoolStatusCode rc = drain();
+      rc != ThreadpoolStatusCode::e_SUCCESS) {
+    return rc;
+  }
   {
-    std::unique_lock lock(mutex);
-    stop = true;
+    std::lock_guard lock(mutex);
+    stop.store(true);
   }
 
   cv.notify_all();
@@ -52,26 +83,45 @@ void Threadpool::shutdown() {
   for (auto &worker : workers) {
     worker.join();
   }
+  std::cout << "Threadpool shutdown completed." << std::endl;
+  return ThreadpoolStatusCode::e_SUCCESS;
 }
 
-void Threadpool::status(int &status) {
-  std::unique_lock lock(mutex);
-  status = threadPoolQueue.size();
-  std::cout << std::format("Tasks pending in the Threadpool: {}", status)
+ThreadpoolStatusCode Threadpool::status(int &pendingTasksCount) {
+  std::lock_guard lock(mutex);
+  pendingTasksCount = threadPoolQueue.size();
+  std::cout << std::format("Tasks pending in the Threadpool: {}",
+                           pendingTasksCount)
             << std::endl;
+  if (stop.load()) {
+    return ThreadpoolStatusCode::e_DEAD;
+  }
+  if (drained.load()) {
+    return ThreadpoolStatusCode::e_DRAINED;
+  }
+  return ThreadpoolStatusCode::e_ACTIVE;
 }
 
-void Threadpool::drain() {
-  std::unique_lock lockQueue(drain_mutex);
+ThreadpoolStatusCode Threadpool::drain() {
+  if (drained.load()) {
+    std::cout << "Threadpool has already been drained." << std::endl;
+    return ThreadpoolStatusCode::e_DRAINED;
+  }
+  std::lock_guard lockQueue(drain_mutex);
   std::unique_lock lock(mutex);
   cvDrain.wait(lock, [&] { return threadPoolQueue.empty(); });
-  drained = true;
+  drained.store(true);
   std::cout << "Draining completed" << std::endl;
+  return ThreadpoolStatusCode::e_SUCCESS;
 }
 
 void Threadpool::reset() {
-  std::unique_lock lockQueue(drain_mutex);
-  drained = false;
+  if (!drained.load()) {
+    std::cout << "Nothing to reset" << std::endl;
+    return;
+  }
+  std::lock_guard lockQueue(drain_mutex);
+  drained.store(false);
 }
 
 }; // namespace Threadpool

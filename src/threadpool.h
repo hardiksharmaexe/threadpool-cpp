@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <condition_variable>
 #include <functional>
 #include <mutex>
@@ -8,25 +9,37 @@
 #include <vector>
 
 namespace Threadpool {
+enum class ThreadpoolStatusCode {
+  e_SUCCESS,
+  e_DEAD,
+  e_DRAINED,
+  e_ACTIVE,
+  e_QUEUE_FULL,
+};
+
+std::ostream& operator<< (std::ostream& os, ThreadpoolStatusCode code);
+
 class Threadpool {
 private:
   std::vector<std::thread> workers;
-  std::queue<std::function<void()>> threadPoolQueue;
   std::mutex mutex, drain_mutex;
-  bool stop = false;
-  bool drained = false;
   std::condition_variable cv, cvDrain;
+  std::queue<std::function<void()>> threadPoolQueue;
+  std::atomic<bool> drained{false};
+  std::atomic<bool> stop{false};
+  unsigned short int queueSize;
 
   void worker(int workerId);
 
 public:
-  explicit Threadpool(int workerCount = 10);
+  explicit Threadpool(unsigned short int workerCount = 10, unsigned short int queueSize = 1000);
   ~Threadpool();
-  template <typename F, typename... Args> void enqueue(F &&f, Args &&...args);
-  void shutdown();
-  void drain();
+  template <typename F, typename... Args>
+  ThreadpoolStatusCode enqueue(F &&f, Args &&...args);
+  ThreadpoolStatusCode shutdown();
+  ThreadpoolStatusCode drain();
   void reset();
-  void status(int &status);
+  ThreadpoolStatusCode status(int& pendingTasksCount);
 
   Threadpool(Threadpool &) = delete;
   Threadpool(const Threadpool &) = delete;
