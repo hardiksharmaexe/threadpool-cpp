@@ -45,14 +45,16 @@ void Threadpool::worker(int workerId) {
     }
     std::cout << std::format("Worker {} is executing the task", workerId)
               << std::endl;
+    cvDrain.notify_one();
     task();
     std::cout << std::format("Worker {} completed the execution", workerId)
               << std::endl;
-    cvDrain.notify_one();
   }
 }
 
-Threadpool::Threadpool(unsigned short int workerCount, unsigned short int queueSize) : queueSize(queueSize) {
+Threadpool::Threadpool(unsigned short int workerCount,
+                       unsigned short int queueSize)
+    : queueSize(queueSize) {
   std::cout << "Starting Threadpool" << std::endl;
   for (int i = 0; i < workerCount; ++i) {
     workers.emplace_back(&Threadpool::worker, this, i);
@@ -69,9 +71,11 @@ ThreadpoolStatusCode Threadpool::shutdown() {
     std::cout << "Threadpool is already shutdown" << std::endl;
     return ThreadpoolStatusCode::e_DEAD;
   }
-  if (ThreadpoolStatusCode rc = drain();
-      rc != ThreadpoolStatusCode::e_SUCCESS) {
-    return rc;
+  if (!drained.load()) {
+    if (ThreadpoolStatusCode rc = drain();
+        rc != ThreadpoolStatusCode::e_SUCCESS) {
+      return rc;
+    }
   }
   {
     std::lock_guard lock(mutex);
@@ -111,11 +115,15 @@ ThreadpoolStatusCode Threadpool::drain() {
   std::unique_lock lock(mutex);
   cvDrain.wait(lock, [&] { return threadPoolQueue.empty(); });
   drained.store(true);
-  std::cout << "Draining completed" << std::endl;
+  std::cout << "Queue draining completed" << std::endl;
   return ThreadpoolStatusCode::e_SUCCESS;
 }
 
 void Threadpool::reset() {
+  if (stop.load()) {
+    std::cout << "Threadpool is dead. Can not reset." << std::endl;
+    return;
+  }
   if (!drained.load()) {
     std::cout << "Nothing to reset" << std::endl;
     return;
