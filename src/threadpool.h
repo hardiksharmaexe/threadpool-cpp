@@ -17,7 +17,7 @@ enum class ThreadpoolStatusCode {
   e_QUEUE_FULL,
 };
 
-std::ostream& operator<< (std::ostream& os, ThreadpoolStatusCode code);
+std::ostream &operator<<(std::ostream &os, ThreadpoolStatusCode code);
 
 class Threadpool {
 private:
@@ -32,14 +32,15 @@ private:
   void worker(int workerId);
 
 public:
-  explicit Threadpool(unsigned short int workerCount = 10, unsigned short int queueSize = 1000);
+  explicit Threadpool(unsigned short int workerCount = 10,
+                      unsigned short int queueSize = 1000);
   ~Threadpool();
   template <typename F, typename... Args>
   ThreadpoolStatusCode enqueue(F &&f, Args &&...args);
   ThreadpoolStatusCode shutdown();
   ThreadpoolStatusCode drain();
   void reset();
-  ThreadpoolStatusCode status(int& pendingTasksCount);
+  ThreadpoolStatusCode status(int &pendingTasksCount);
 
   Threadpool(Threadpool &) = delete;
   Threadpool(const Threadpool &) = delete;
